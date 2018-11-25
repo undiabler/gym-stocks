@@ -78,7 +78,7 @@ class StocksEnv(gym.Env):
         if len(self.states) == 0:
             raise NameError('Invalid empty directory {}'.format(dirname))
 
-    def _step(self, action):
+    def step(self, action):
         assert self.action_space.contains(action)
 
         portfolio = self.money + (1. - self.comission) * self.equity * self.state.current_price()
@@ -108,7 +108,7 @@ class StocksEnv(gym.Env):
 
         return state, reward, done, None
 
-    def _reset(self):
+    def reset(self):
         self.state = StockState(random.choice(self.states))
 
         self.money = 1000000
