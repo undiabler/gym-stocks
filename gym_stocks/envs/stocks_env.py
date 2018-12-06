@@ -56,13 +56,16 @@ class StocksEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, datadir):
-        self.bound = 100000
+        self.startBalance = 10000
 
-        self.comission = 0.1 / 100.
-        self.num = 1
+        self.comission = 0.25 / 100.
 
-        self.money = 0
-        self.equity = 0
+        self.balanceBase = self.startBalance
+        # TODO: add random initial position
+        self.balanceSub = 0
+
+        self.subPrice = 0
+
         self.states = []
         self.state = None
 
@@ -72,8 +75,20 @@ class StocksEnv(gym.Env):
 
             self.states.append(path)
 
-        self.observation_space = spaces.Box(low=0, high=self.bound, shape=(5,1))
-        self.action_space = spaces.Discrete(3)
+        # contains space of input data
+        self.observation_space = spaces.Tuple((
+            # position price, normalized
+            spaces.Box(low=0, high=1., shape=(1,)),
+            # total balance used for SHORT/LONG position
+            spaces.Box(low=-1., high=1., shape=(1,)),
+            # normalized price (ohlc) + volume + changed percent
+            spaces.Box(low=0, high=1., shape=(5,1)),
+        ))
+
+        # action is float with self risk management
+        #  -1.0 means SHORT with 100% of balance
+        #  +1.0 means LONG with 100% of balance
+        self.action_space = spaces.Box(-1.0, 1.0, shape=(1,))
 
         if len(self.states) == 0:
             raise NameError('Invalid empty directory {}'.format(dirname))
