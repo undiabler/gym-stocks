@@ -5,6 +5,7 @@ from gym.utils import seeding
 import glob
 import os
 import random
+import math
 
 import pandas as pd
 import numpy as np
@@ -13,17 +14,8 @@ class StocksEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, datadir):
-        self.startBalance = 10000
 
         self.comission = 0.25 / 100.
-        # TODO: add random initial position
-
-        self.balanceBase = self.startBalance
-
-        self.posBalance = 0
-        self.posPrice = 0
-
-        self.prevAction = 0
 
         self.generators = []
         self.stockMarket = None
@@ -54,17 +46,129 @@ class StocksEnv(gym.Env):
 
     def step(self, action):
         # assert self.action_space.contains(action)
+         # if action == self.prevAction:
+            # return
 
         raw, done = self.stockMarket.next()
         state = raw[['Open', 'High', 'Low', 'Close','Volume_Currency',]].values
 
-        return state, 0, done, None
+        # market price can be random in (open,close) range
+        price = raw.tail(1)['Close'].values[0]
+
+        # do action 
+        self._order(action, price)
+    
+        roi = self._reward_calc(price)
+
+        return state, roi, done, None
+                
+    # refactored for futures trading (not tested yet)
+    def _order(self,coef,price):
+
+        if math.fabs(coef)<0.01:
+            return
+
+        posCoef = 0
+        if self.posBalance>0:
+            posCoef = price / self.posPrice
+        if self.posBalance<0:
+            posCoef = self.posPrice / price
+
+        coefBalance = coef * (self.balanceBase + math.fabs(self.posBalance))
+
+        print("action: {} on price: {} | with balance: {}, total: {}".format(coef,price,coefBalance,self.balanceBase + self.posBalance))
+
+       
+
+        if coefBalance>0:
+            if self.posBalance>0:
+                coefBalance = min(coefBalance,self.balanceBase)
+                self.balanceBase -= coefBalance
+                mvcomm = (1.-self.comission)*coefBalance
+                self.posPrice = (self.posPrice*self.posBalance + price*mvcomm)/(self.posBalance+mvcomm)
+                self.posBalance += mvcomm
+                
+            if self.posBalance<=0:
+                coefBalance = min(coefBalance,self.balanceBase+math.fabs(self.posBalance)*posCoef)
+                if math.fabs(coefBalance)>math.fabs(self.posBalance):
+                    self.balanceBase += math.fabs(self.posBalance)*posCoef
+                    coefBalance = coefBalance+self.posBalance
+                    self.balanceBase -= math.fabs(coefBalance)
+                    self.posBalance = (1.-self.comission)*coefBalance
+                    self.posPrice = price
+                else:
+                    self.balanceBase += coefBalance*posCoef
+                    self.posBalance += coefBalance
+
+        if coefBalance<0:
+            if self.posBalance<0:
+                coefBalance = max(coefBalance,-self.balanceBase)
+                self.balanceBase += coefBalance
+                mvcomm = (1.-self.comission)*coefBalance
+                self.posPrice = (self.posPrice*math.fabs(self.posBalance) + price*math.fabs(mvcomm))/(math.fabs(self.posBalance)+math.fabs(mvcomm))
+                self.posBalance += mvcomm
+                
+            if self.posBalance>=0:
+                coefBalance = max(coefBalance,-self.balanceBase-math.fabs(self.posBalance)*posCoef)
+                if math.fabs(coefBalance)>math.fabs(self.posBalance):
+                    self.balanceBase += math.fabs(self.posBalance)*posCoef
+                    coefBalance = coefBalance+self.posBalance
+                    self.balanceBase -= math.fabs(coefBalance)
+                    self.posBalance = (1.-self.comission)*coefBalance
+                    self.posPrice = price
+                else:
+                    self.balanceBase += math.fabs(coefBalance)*posCoef
+                    self.posBalance += coefBalance
+
+        print("new state ---\n")
+        print("balance:{}\npos price:{}\npos balance:{}".format(self.balanceBase,self.posPrice,self.posBalance))
+
+        """
+        case 1:
+            100 position 50 add
+        case 2:
+            100 pos -50 add 
+        case 3:
+            -100 pos -50 add
+        case 4: 
+            -100 pos 50 add
+        case 5:
+            100 pos -200 add
+        case 6: 
+            -100 pos 200 add
+        """
+
+    def _reward_calc(self,price):
+
+        subBal = 0
+
+        if self.posBalance>0:
+            subBal = self.posBalance * price / self.posPrice
+        if self.posBalance<0:
+            subBal = -self.posBalance * self.posPrice / price
+
+        roi = ((subBal + self.balanceBase) - self.startBalance) / self.startBalance
+
+        return roi
+
+    # TODO: randomPos add some initial position
+    def _init_balance(self,randomPos=False):
+
+        # initial balance for reward calc
+        self.startBalance = 10000
+
+        # main balance (like fiat)
+        self.balanceBase = self.startBalance
+
+        # main balance (like contracts) with init position price
+        self.posBalance = 0
+        self.posPrice = 0
+
 
     def reset(self):
         self.stockMarket = random.choice(self.generators).GetNewTraderWindow()
 
-        self.money = 1000000
-        self.equity = 0
+        self._init_balance()
 
         state, _, done,_ = self.step(0.0)
         return state
@@ -222,6 +326,8 @@ class MixTraderWindow(object):
 
         
 
+def samesign(x,y):
+    return (x<=0 and y<=0) or (x>=0 and y>=0)
 
 
 def grouper(df,freq):
